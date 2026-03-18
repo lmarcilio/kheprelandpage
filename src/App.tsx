@@ -252,7 +252,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen selection:bg-khepre-gold/30">
+    <div className="min-h-screen selection:bg-khepre-gold/30 overflow-x-hidden">
       <LandingPage data={cmsData} onAdminClick={() => setShowLogin(true)} />
       
       <AnimatePresence>
@@ -905,12 +905,16 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
     <>
       {/* Navigation */}
       <nav className="relative w-full z-50 bg-khepre-yellow border-b border-khepre-dark/10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             {data.logoUrl ? (
-              <img src={data.logoUrl} alt="KHEPRE Logo" className="w-[300px] h-[250px] object-contain" />
+              <img 
+                src={data.logoUrl} 
+                alt="KHEPRE Logo" 
+                className="w-[180px] h-[150px] md:w-[300px] md:h-[250px] object-contain" 
+              />
             ) : (
-              <span className="text-2xl font-serif tracking-widest font-bold text-khepre-dark">KHEPRE</span>
+              <span className="text-xl md:text-2xl font-serif tracking-widest font-bold text-khepre-dark">KHEPRE</span>
             )}
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm uppercase tracking-widest font-bold text-khepre-dark">
@@ -919,7 +923,7 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
             <a href="#sobre" className="hover:text-khepre-olive transition-colors">Sobre</a>
             <a href={data.socialLinks.whatsapp} target="_blank" className="bg-khepre-dark text-white px-6 py-2 rounded-full hover:bg-khepre-olive transition-all">Comprar Agora</a>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 md:gap-4">
             <button onClick={onAdminClick} className="text-khepre-dark/60 hover:text-khepre-dark transition-colors">
               <Settings size={20} />
             </button>
@@ -946,9 +950,9 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
             <span className="inline-block text-khepre-gold uppercase tracking-[0.3em] text-sm font-semibold mb-4">
               Equilíbrio & Bem-estar
             </span>
-            <h1 className="text-6xl md:text-8xl leading-[0.9] mb-6">
+            <h1 className="text-4xl sm:text-5xl md:text-8xl leading-[1.1] md:leading-[0.9] mb-6">
               {data.banner.title} <br />
-              <span className="serif-italic text-khepre-olive">{data.banner.subtitle}</span>
+              <span className="serif-italic text-khepre-olive break-words">{data.banner.subtitle}</span>
             </h1>
             <p className="text-lg text-khepre-dark/70 max-w-md mb-8 leading-relaxed">
               {data.banner.description}
@@ -1254,9 +1258,9 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
             <div className="col-span-2">
               <div className="flex items-center gap-4 mb-6">
                 {data.logoUrl ? (
-                  <img src={data.logoUrl} alt="KHEPRE Logo" className="h-14 w-auto object-contain" />
+                  <img src={data.logoUrl} alt="KHEPRE Logo" className="h-10 md:h-14 w-auto object-contain" />
                 ) : (
-                  <h2 className="text-3xl font-serif font-bold tracking-widest">KHEPRE</h2>
+                  <h2 className="text-xl md:text-3xl font-serif font-bold tracking-widest">KHEPRE</h2>
                 )}
               </div>
               <p className="text-khepre-dark/60 max-w-sm mb-8">
