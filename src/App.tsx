@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback, ChangeEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { supabase, hasValidSupabaseConfig } from "./lib/supabase";
 import { 
   Wind, 
   Moon, 
@@ -18,6 +19,7 @@ import {
   Droplets,
   Zap,
   Settings,
+  Cloud,
   LogOut,
   Plus,
   Trash2,
@@ -203,40 +205,74 @@ function FilePicker({ onFileSelect, label }: { onFileSelect: (base64: string) =>
 }
 
 export default function App() {
-  const [cmsData, setCmsData] = useState<CMSData>(() => {
-    const saved = localStorage.getItem("khepre_cms_data");
-    if (!saved) return INITIAL_DATA;
-    try {
-      const parsed = JSON.parse(saved);
-      if (!parsed || typeof parsed !== 'object') return INITIAL_DATA;
-      
-      // Merge with INITIAL_DATA to ensure new fields (banner, therapist) are present
-      // and ensure numeric types for prices
-      return {
-        ...INITIAL_DATA,
-        ...parsed,
-        products: (parsed.products || INITIAL_DATA.products).map((p: any) => ({
-          ...p,
-          price: typeof p.price === 'number' ? p.price : Number(p.price) || 0,
-          discountedPrice: p.discountedPrice !== undefined ? (typeof p.discountedPrice === 'number' ? p.discountedPrice : Number(p.discountedPrice) || 0) : undefined
-        })),
-        banner: parsed.banner ? { ...INITIAL_DATA.banner, ...parsed.banner } : INITIAL_DATA.banner,
-        therapist: parsed.therapist ? { ...INITIAL_DATA.therapist, ...parsed.therapist } : INITIAL_DATA.therapist,
-        therapies: parsed.therapies || INITIAL_DATA.therapies,
-        socialLinks: parsed.socialLinks ? { ...INITIAL_DATA.socialLinks, ...parsed.socialLinks } : INITIAL_DATA.socialLinks
-      };
-    } catch (e) {
-      console.error("Error parsing saved data:", e);
-      return INITIAL_DATA;
-    }
-  });
-
+  const [cmsData, setCmsData] = useState<CMSData>(INITIAL_DATA);
+  const [isLoading, setIsLoading] = useState(hasValidSupabaseConfig);
+  const [isSaving, setIsSaving] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
 
+  // Fetch from Supabase on mount
   useEffect(() => {
-    localStorage.setItem("khepre_cms_data", JSON.stringify(cmsData));
-  }, [cmsData]);
+    if (!hasValidSupabaseConfig) {
+      setIsLoading(false);
+      return;
+    }
+
+    const fetchData = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('khepre_cms')
+          .select('data')
+          .eq('id', 1)
+          .single();
+
+        if (data && !error) {
+          // Merge with INITIAL_DATA to ensure new fields are present
+          const parsed = data.data;
+          setCmsData({
+            ...INITIAL_DATA,
+            ...parsed,
+            products: (parsed.products || INITIAL_DATA.products).map((p: any) => ({
+              ...p,
+              price: typeof p.price === 'number' ? p.price : Number(p.price) || 0,
+              discountedPrice: p.discountedPrice !== undefined ? (typeof p.discountedPrice === 'number' ? p.discountedPrice : Number(p.discountedPrice) || 0) : undefined
+            })),
+            banner: parsed.banner ? { ...INITIAL_DATA.banner, ...parsed.banner } : INITIAL_DATA.banner,
+            therapist: parsed.therapist ? { ...INITIAL_DATA.therapist, ...parsed.therapist } : INITIAL_DATA.therapist,
+            therapies: parsed.therapies || INITIAL_DATA.therapies,
+            socialLinks: parsed.socialLinks ? { ...INITIAL_DATA.socialLinks, ...parsed.socialLinks } : INITIAL_DATA.socialLinks
+          });
+        }
+      } catch (e) {
+        console.error("Error fetching from Supabase:", e);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  // Save to Supabase when data changes
+  useEffect(() => {
+    if (isLoading || !hasValidSupabaseConfig) return;
+
+    const saveData = async () => {
+      setIsSaving(true);
+      try {
+        await supabase
+          .from('khepre_cms')
+          .upsert({ id: 1, data: cmsData, updated_at: new Date().toISOString() });
+      } catch (e) {
+        console.error("Error saving to Supabase:", e);
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    const timer = setTimeout(saveData, 3000); // 3s debounce to avoid too many writes
+    return () => clearTimeout(timer);
+  }, [cmsData, isLoading]);
 
   const handleLogin = (user: string, pass: string) => {
     if (user === "admin" && pass === "@ndre@04") {
@@ -247,8 +283,79 @@ export default function App() {
     }
   };
 
+  if (!hasValidSupabaseConfig) {
+    return (
+      <div className="min-h-screen bg-khepre-cream flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white p-8 rounded-[32px] shadow-xl border border-khepre-dark/5 text-center">
+          <div className="w-16 h-16 bg-khepre-yellow/30 rounded-2xl flex items-center justify-center text-khepre-gold mb-6 mx-auto">
+            <ShieldCheck size={32} />
+          </div>
+          <h2 className="text-2xl font-serif font-bold text-khepre-dark mb-4">Configuração do Supabase Necessária</h2>
+          <p className="text-khepre-dark/60 text-sm mb-6 leading-relaxed">
+            Para que as informações sejam sincronizadas entre dispositivos, você precisa adicionar as chaves do Supabase nos Segredos do AI Studio.
+          </p>
+          <div className="text-left space-y-4 mb-8">
+            <div className="flex gap-3">
+              <div className="w-6 h-6 rounded-full bg-khepre-gold text-white flex items-center justify-center text-xs font-bold flex-shrink-0">1</div>
+              <p className="text-xs text-khepre-dark/80">Abra o menu <b>Settings</b> (ícone de engrenagem <Settings size={12} className="inline" /> no canto superior direito do AI Studio).</p>
+            </div>
+            <div className="flex gap-3">
+              <div className="w-6 h-6 rounded-full bg-khepre-gold text-white flex items-center justify-center text-xs font-bold flex-shrink-0">2</div>
+              <p className="text-xs text-khepre-dark/80">Clique em <b>Secrets</b> e adicione estas duas chaves:</p>
+            </div>
+            <div className="pl-9 space-y-2">
+              <div className="bg-gray-100 p-2 rounded flex justify-between items-center">
+                <code className="text-[10px] font-mono">VITE_SUPABASE_URL</code>
+                <span className="text-[9px] text-gray-400">Sua URL do Projeto</span>
+              </div>
+              <div className="bg-gray-100 p-2 rounded flex justify-between items-center">
+                <code className="text-[10px] font-mono">VITE_SUPABASE_ANON_KEY</code>
+                <span className="text-[9px] text-gray-400">Sua Chave Anon Public</span>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <div className="w-6 h-6 rounded-full bg-khepre-gold text-white flex items-center justify-center text-xs font-bold flex-shrink-0">3</div>
+              <p className="text-xs text-khepre-dark/80">Após colar os valores, pressione <b>Enter</b>. O app irá reiniciar e conectar automaticamente.</p>
+            </div>
+          </div>
+          <div className="bg-blue-50 p-4 rounded-xl text-left">
+            <p className="text-[10px] text-blue-700 font-bold mb-1 flex items-center gap-1">
+              <ShieldCheck size={12} /> Dica de Segurança
+            </p>
+            <p className="text-[9px] text-blue-600 leading-tight">
+              As chaves são inseridas no painel do AI Studio (fora do site) para que fiquem protegidas e não se percam quando você fechar o navegador.
+            </p>
+          </div>
+          <p className="text-[10px] text-khepre-dark/40 italic">
+            * Se você já adicionou e o erro persiste, verifique se não há espaços extras nas chaves.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (isAdmin) {
-    return <AdminPanel data={cmsData} setData={setCmsData} onLogout={() => setIsAdmin(false)} />;
+    return (
+      <div className="relative">
+        {isSaving && (
+          <div className="fixed top-4 right-4 z-[100] bg-khepre-dark text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 shadow-lg animate-pulse">
+            <Sparkles size={14} className="animate-spin" /> Salvando na nuvem...
+          </div>
+        )}
+        <AdminPanel data={cmsData} setData={setCmsData} onLogout={() => setIsAdmin(false)} />
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-khepre-cream flex items-center justify-center">
+        <div className="text-center">
+          <Wind size={48} className="text-khepre-olive animate-spin mb-4 mx-auto" />
+          <p className="text-khepre-dark font-serif tracking-widest">CARREGANDO KHEPRE...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -845,6 +952,56 @@ function AdminPanel({ data, setData, onLogout }: { data: CMSData; setData: (d: C
                 <div>
                   <label className="admin-label">Link Shopee</label>
                   <input className="admin-input" value={data.socialLinks.shopee} onChange={e => updateSocial('shopee', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="space-y-4 pt-6">
+                <h4 className="text-sm font-bold uppercase tracking-widest text-khepre-gold border-b border-khepre-gold/20 pb-2 flex items-center gap-2">
+                  <Cloud size={16} /> Status da Nuvem (Supabase)
+                </h4>
+                <div className="bg-green-50 p-4 rounded-xl border border-green-100">
+                  <p className="text-xs text-green-700 flex items-center gap-2 font-bold mb-2">
+                    <ShieldCheck size={14} /> Conectado com Sucesso
+                  </p>
+                  <p className="text-[10px] text-green-600 leading-relaxed">
+                    Seu site está salvando os dados na nuvem. Se as tabelas ainda não foram criadas no seu Supabase, siga as instruções abaixo.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="admin-label text-khepre-dark">Script SQL para Criar Tabelas</label>
+                  <p className="text-[10px] text-gray-500 mb-2">
+                    Copie o código abaixo, vá no seu painel do Supabase → <b>SQL Editor</b> → <b>New Query</b>, cole e clique em <b>Run</b>.
+                  </p>
+                  <div className="relative group">
+                    <pre className="bg-gray-900 text-gray-300 p-4 rounded-xl text-[10px] overflow-x-auto font-mono leading-relaxed">
+{`-- Cria a tabela para armazenar os dados do site
+create table if not exists khepre_cms (
+  id int primary key default 1,
+  data jsonb not null,
+  updated_at timestamp with time zone default now()
+);
+
+-- Insere a linha inicial de dados
+insert into khepre_cms (id, data) 
+values (1, '{}')
+on conflict (id) do nothing;
+
+-- Habilita o acesso público para leitura e escrita
+alter table khepre_cms enable row level security;
+create policy "Acesso público total" on khepre_cms for all using (true) with check (true);`}
+                    </pre>
+                    <button 
+                      onClick={() => {
+                        const sql = `-- Cria a tabela para armazenar os dados do site\ncreate table if not exists khepre_cms (\n  id int primary key default 1,\n  data jsonb not null,\n  updated_at timestamp with time zone default now()\n);\n\n-- Insere a linha inicial de dados\ninsert into khepre_cms (id, data) \nvalues (1, '{}')\non conflict (id) do nothing;\n\n-- Habilita o acesso público para leitura e escrita\nalter table khepre_cms enable row level security;\ncreate policy "Acesso público total" on khepre_cms for all using (true) with check (true);`;
+                        navigator.clipboard.writeText(sql);
+                        alert("Script SQL copiado!");
+                      }}
+                      className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded text-[9px] transition-all"
+                    >
+                      Copiar SQL
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
