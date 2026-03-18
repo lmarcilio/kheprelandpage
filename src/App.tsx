@@ -904,11 +904,11 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
   return (
     <>
       {/* Navigation */}
-      <nav className="fixed top-0 w-full z-50 bg-khepre-yellow border-b border-khepre-dark/10">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+      <nav className="relative w-full z-50 bg-khepre-yellow border-b border-khepre-dark/10">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             {data.logoUrl ? (
-              <img src={data.logoUrl} alt="KHEPRE Logo" className="h-12 w-auto object-contain" />
+              <img src={data.logoUrl} alt="KHEPRE Logo" className="w-[300px] h-[250px] object-contain" />
             ) : (
               <span className="text-2xl font-serif tracking-widest font-bold text-khepre-dark">KHEPRE</span>
             )}
@@ -931,7 +931,7 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
       </nav>
 
       {/* Hero Section */}
-      <section className="relative pt-40 pb-20 overflow-hidden">
+      <section className="relative pt-20 pb-20 overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full -z-10 opacity-20">
           <div className="absolute top-20 right-10 w-96 h-96 bg-khepre-yellow rounded-full blur-3xl" />
           <div className="absolute bottom-20 left-10 w-72 h-72 bg-khepre-olive rounded-full blur-3xl" />
@@ -1254,7 +1254,7 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
             <div className="col-span-2">
               <div className="flex items-center gap-4 mb-6">
                 {data.logoUrl ? (
-                  <img src={data.logoUrl} alt="KHEPRE Logo" className="h-10 w-auto object-contain" />
+                  <img src={data.logoUrl} alt="KHEPRE Logo" className="h-14 w-auto object-contain" />
                 ) : (
                   <h2 className="text-3xl font-serif font-bold tracking-widest">KHEPRE</h2>
                 )}
