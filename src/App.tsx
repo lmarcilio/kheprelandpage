@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useCallback, ChangeEvent } from "react";
+import { useState, useEffect, useCallback, ChangeEvent, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { supabase, hasValidSupabaseConfig, updateSupabaseConfig } from "./lib/supabase";
 import { 
@@ -29,16 +29,40 @@ import {
   Smartphone,
   Link as LinkIcon,
   Image as ImageIcon,
-  Type
+  Type,
+  Video,
+  FileText,
+  GripVertical
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  horizontalListSortingStrategy,
+  useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // --- Types ---
 
 interface Product {
   id: string;
   name: string;
-  description: string;
-  image: string;
+  shortDescription: string;
+  fullDescription: string;
+  image: string; // Keep for backward compatibility or as main image
+  images: string[];
+  videoUrl?: string;
+  localVideo?: string; // New field for local video upload
   price: number;
   discountedPrice?: number;
   benefits: string[];
@@ -83,6 +107,13 @@ interface Therapy {
   icon: string;
 }
 
+interface WeeklyTopic {
+  title: string;
+  content: string;
+  image: string;
+  active: boolean;
+}
+
 interface CMSData {
   products: Product[];
   testimonials: Testimonial[];
@@ -96,6 +127,7 @@ interface CMSData {
   banner: BannerData;
   therapist: TherapistData;
   therapies: Therapy[];
+  weeklyTopic: WeeklyTopic;
 }
 
 // --- Initial Data ---
@@ -124,12 +156,22 @@ const INITIAL_DATA: CMSData = {
     { id: "4", title: "Radiestesia", description: "Detecção e medição de energias sutis para identificar desequilíbrios em ambientes e pessoas.", icon: "Wind" },
     { id: "5", title: "Grupos de Imersão", description: "Vivências coletivas para aprofundamento no autoconhecimento e práticas de cura energética.", icon: "Droplets" }
   ],
+  weeklyTopic: {
+    title: "Assunto da Semana",
+    content: "Compartilhe aqui uma matéria interessante ou um pensamento para seus clientes.",
+    image: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&q=80&w=1000",
+    active: true
+  },
   products: [
     {
       id: "1",
       name: "Hora do Sono",
-      description: "Durma melhor e acorde renovado(a)! O Spray Hora do Sono é perfeito para quem busca um descanso profundo e restaurador, aliviando o estresse e preparando seu corpo e mente para um novo dia com mais disposição.",
+      shortDescription: "Durma melhor e acorde renovado(a)!",
+      fullDescription: "O Spray Hora do Sono é perfeito para quem busca um descanso profundo e restaurador, aliviando o estresse e preparando seu corpo e mente para um novo dia com mais disposição. Formulado com óleos essenciais puros que induzem ao relaxamento profundo.",
       image: "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&q=80&w=800", 
+      images: ["https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&q=80&w=800"],
+      videoUrl: "",
+      localVideo: "",
       price: 129.90,
       discountedPrice: 89.90,
       benefits: ["Descanso Profundo", "Alívio de Estresse", "Mente Calma"],
@@ -171,7 +213,7 @@ const formatPrice = (val: any) => {
 
 // --- Components ---
 
-function FilePicker({ onFileSelect, label }: { onFileSelect: (base64: string) => void, label: string }) {
+function FilePicker({ onFileSelect, label, accept = "image/*", uniqueId }: { onFileSelect: (base64: string) => void, label: string, accept?: string, uniqueId?: string }) {
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -183,23 +225,66 @@ function FilePicker({ onFileSelect, label }: { onFileSelect: (base64: string) =>
     }
   };
 
+  const inputId = `file-upload-${uniqueId || label.replace(/\s+/g, '-').toLowerCase()}`;
+
   return (
     <div className="flex flex-col gap-2">
       <label className="admin-label">{label}</label>
       <div className="flex gap-2">
         <input
           type="file"
-          accept="image/*"
+          accept={accept}
           onChange={handleFileChange}
           className="hidden"
-          id={`file-upload-${label}`}
+          id={inputId}
         />
         <label
-          htmlFor={`file-upload-${label}`}
-          className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all"
+          htmlFor={inputId}
+          className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all w-fit"
         >
-          <ImageIcon size={16} /> Carregar do PC
+          {accept.includes('video') ? <Video size={16} /> : <ImageIcon size={16} />} 
+          {accept.includes('video') ? 'Carregar Vídeo' : 'Carregar do PC'}
         </label>
+      </div>
+    </div>
+  );
+}
+
+function SortableImage({ id, url, onRemove }: { id: string; url: string; onRemove: () => void; key?: any }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: transform ? 10 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative group aspect-square bg-gray-100 rounded-lg overflow-hidden border border-gray-200">
+      <img src={url} className="w-full h-full object-cover" />
+      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+        <button 
+          {...attributes} 
+          {...listeners} 
+          className="p-2 bg-white rounded-full text-gray-700 cursor-grab active:cursor-grabbing"
+        >
+          <GripVertical size={16} />
+        </button>
+        <button 
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="p-2 bg-red-500 rounded-full text-white"
+        >
+          <Trash2 size={16} />
+        </button>
       </div>
     </div>
   );
@@ -424,13 +509,40 @@ export default function App() {
 
 // --- Admin Panel ---
 
-function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData; setData: (d: CMSData) => void; onLogout: () => void; supabaseError: string | null }) {
-  const [activeTab, setActiveTab] = useState<'products' | 'testimonials' | 'banner' | 'therapist' | 'therapies' | 'settings'>('products');
+function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData; setData: Dispatch<SetStateAction<CMSData>>; onLogout: () => void; supabaseError: string | null }) {
+  const [activeTab, setActiveTab] = useState<'products' | 'testimonials' | 'banner' | 'therapist' | 'therapies' | 'weeklyTopic' | 'settings'>('products');
   const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('khepre_supabase_url') || "");
   const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('khepre_supabase_key') || "");
 
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent, productId: string) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setData(prev => {
+        const product = prev.products.find(p => p.id === productId);
+        if (!product) return prev;
+
+        const oldIndex = product.images.indexOf(active.id as string);
+        const newIndex = product.images.indexOf(over.id as string);
+
+        const newImages = arrayMove(product.images, oldIndex, newIndex);
+        return {
+          ...prev,
+          products: prev.products.map(p => p.id === productId ? { ...p, images: newImages, image: newImages[0] || "" } : p)
+        };
+      });
+    }
+  };
+
   const updateSocial = (key: keyof CMSData['socialLinks'], value: string) => {
-    setData({ ...data, socialLinks: { ...data.socialLinks, [key]: value } });
+    setData(prev => ({ ...prev, socialLinks: { ...prev.socialLinks, [key]: value } }));
   };
 
   return (
@@ -470,6 +582,12 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
             <MessageCircle size={18} /> Relatos
           </button>
           <button 
+            onClick={() => setActiveTab('weeklyTopic')}
+            className={`w-full text-left px-4 py-3 rounded-lg transition-all flex items-center gap-3 ${activeTab === 'weeklyTopic' ? 'bg-khepre-gold text-white' : 'hover:bg-white/10'}`}
+          >
+            <FileText size={18} /> Matéria da Semana
+          </button>
+          <button 
             onClick={() => setActiveTab('settings')}
             className={`w-full text-left px-4 py-3 rounded-lg transition-all flex items-center gap-3 ${activeTab === 'settings' ? 'bg-khepre-gold text-white' : 'hover:bg-white/10'}`}
           >
@@ -490,16 +608,20 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
               <button 
                 onClick={() => {
                   const newProd: Product = {
-                    id: Date.now().toString(),
+                    id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                     name: "Novo Produto",
-                    description: "",
+                    shortDescription: "",
+                    fullDescription: "",
                     image: "",
+                    images: [],
+                    videoUrl: "",
+                    localVideo: "",
                     price: 0,
                     benefits: [],
                     activation: "",
                     links: []
                   };
-                  setData({ ...data, products: [...data.products, newProd] });
+                  setData(prev => ({ ...prev, products: [...prev.products, newProd] }));
                 }}
                 className="bg-khepre-dark text-white px-6 py-2 rounded-full flex items-center gap-2 hover:bg-khepre-olive transition-all"
               >
@@ -511,25 +633,96 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
               {data.products.map(product => (
                 <div key={product.id} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 grid md:grid-cols-3 gap-6">
                   <div className="space-y-4">
-                    <FilePicker 
-                      label="Imagem do Produto" 
-                      onFileSelect={base64 => {
-                        const newProds = data.products.map(p => p.id === product.id ? { ...p, image: base64 } : p);
-                        setData({ ...data, products: newProds });
-                      }} 
-                    />
-                    <div className="pt-2">
-                      <label className="admin-label">Ou URL da Imagem</label>
-                      <input 
-                        className="admin-input" 
-                        value={product.image} 
-                        onChange={e => {
-                          const newProds = data.products.map(p => p.id === product.id ? { ...p, image: e.target.value } : p);
-                          setData({ ...data, products: newProds });
-                        }}
+                    <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 border-b pb-2">Imagens e Vídeo</h4>
+                    
+                    {/* Multi-Image Uploader with DND */}
+                    <div className="space-y-4">
+                      <FilePicker 
+                        label="Adicionar Foto" 
+                        uniqueId={`product-photo-${product.id}`}
+                        onFileSelect={base64 => {
+                          const newImages = [...(product.images || []), base64];
+                          setData(prev => ({
+                            ...prev,
+                            products: prev.products.map(p => p.id === product.id ? { ...p, images: newImages, image: newImages[0] || "" } : p)
+                          }));
+                        }} 
                       />
+                      
+                      <DndContext 
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={(e) => handleDragEnd(e, product.id)}
+                      >
+                        <SortableContext 
+                          items={product.images || []}
+                          strategy={horizontalListSortingStrategy}
+                        >
+                          <div className="grid grid-cols-3 gap-2">
+                            {(product.images || []).map((img, idx) => (
+                              <SortableImage 
+                                key={img} 
+                                id={img} 
+                                url={img} 
+                                onRemove={() => {
+                                  const newImages = product.images.filter((_, i) => i !== idx);
+                                  setData(prev => ({
+                                    ...prev,
+                                    products: prev.products.map(p => p.id === product.id ? { ...p, images: newImages, image: newImages[0] || "" } : p)
+                                  }));
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </SortableContext>
+                      </DndContext>
+                      <p className="text-[10px] text-gray-400 italic">Arraste para reordenar. A primeira foto será a principal.</p>
                     </div>
-                    {product.image && <img src={product.image} className="w-full aspect-square object-cover rounded-lg shadow-inner" />}
+
+                    <div className="space-y-4 pt-4 border-t">
+                      <h5 className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Vídeo do Produto</h5>
+                      <div>
+                        <label className="admin-label">URL do YouTube</label>
+                        <input 
+                          className="admin-input" 
+                          placeholder="Ex: https://youtube.com/..."
+                          value={product.videoUrl || ""} 
+                          onChange={e => {
+                            setData(prev => ({
+                              ...prev,
+                              products: prev.products.map(p => p.id === product.id ? { ...p, videoUrl: e.target.value } : p)
+                            }));
+                          }}
+                        />
+                      </div>
+                      <FilePicker 
+                        label="Ou Carregar Vídeo Local" 
+                        uniqueId={`product-video-${product.id}`}
+                        accept="video/*"
+                        onFileSelect={base64 => {
+                          setData(prev => ({
+                            ...prev,
+                            products: prev.products.map(p => p.id === product.id ? { ...p, localVideo: base64 } : p)
+                          }));
+                        }} 
+                      />
+                      {product.localVideo && (
+                        <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+                          <video src={product.localVideo} className="w-full h-full" controls />
+                          <button 
+                            onClick={() => {
+                              setData(prev => ({
+                                ...prev,
+                                products: prev.products.map(p => p.id === product.id ? { ...p, localVideo: undefined } : p)
+                              }));
+                            }}
+                            className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="space-y-4 col-span-2">
                     <div className="grid grid-cols-2 gap-4">
@@ -539,8 +732,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                           className="admin-input" 
                           value={product.name} 
                           onChange={e => {
-                            const newProds = data.products.map(p => p.id === product.id ? { ...p, name: e.target.value } : p);
-                            setData({ ...data, products: newProds });
+                            setData(prev => ({
+                              ...prev,
+                              products: prev.products.map(p => p.id === product.id ? { ...p, name: e.target.value } : p)
+                            }));
                           }}
                         />
                       </div>
@@ -551,8 +746,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                           className="admin-input" 
                           value={product.price} 
                           onChange={e => {
-                            const newProds = data.products.map(p => p.id === product.id ? { ...p, price: Number(e.target.value) } : p);
-                            setData({ ...data, products: newProds });
+                            setData(prev => ({
+                              ...prev,
+                              products: prev.products.map(p => p.id === product.id ? { ...p, price: Number(e.target.value) } : p)
+                            }));
                           }}
                         />
                       </div>
@@ -563,25 +760,37 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                           className="admin-input" 
                           value={product.discountedPrice || ""} 
                           onChange={e => {
-                            const newProds = data.products.map(p => p.id === product.id ? { ...p, discountedPrice: e.target.value ? Number(e.target.value) : undefined } : p);
-                            setData({ ...data, products: newProds });
+                            setData(prev => ({
+                              ...prev,
+                              products: prev.products.map(p => p.id === product.id ? { ...p, discountedPrice: e.target.value ? Number(e.target.value) : undefined } : p)
+                            }));
                           }}
                         />
-                        {product.discountedPrice && (
-                          <p className="text-xs text-green-600 font-bold mt-1">
-                            Desconto de {calculateDiscount(product.price, product.discountedPrice)}%
-                          </p>
-                        )}
                       </div>
                     </div>
                     <div>
-                      <label className="admin-label">Descrição</label>
+                      <label className="admin-label">Descrição Curta (Home)</label>
                       <textarea 
-                        className="admin-input h-24" 
-                        value={product.description} 
+                        className="admin-input h-16" 
+                        value={product.shortDescription} 
                         onChange={e => {
-                          const newProds = data.products.map(p => p.id === product.id ? { ...p, description: e.target.value } : p);
-                          setData({ ...data, products: newProds });
+                          setData(prev => ({
+                            ...prev,
+                            products: prev.products.map(p => p.id === product.id ? { ...p, shortDescription: e.target.value } : p)
+                          }));
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="admin-label">Descrição Completa (Detalhes)</label>
+                      <textarea 
+                        className="admin-input h-32" 
+                        value={product.fullDescription} 
+                        onChange={e => {
+                          setData(prev => ({
+                            ...prev,
+                            products: prev.products.map(p => p.id === product.id ? { ...p, fullDescription: e.target.value } : p)
+                          }));
                         }}
                       />
                     </div>
@@ -591,8 +800,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                         className="admin-input" 
                         value={product.activation} 
                         onChange={e => {
-                          const newProds = data.products.map(p => p.id === product.id ? { ...p, activation: e.target.value } : p);
-                          setData({ ...data, products: newProds });
+                          setData(prev => ({
+                            ...prev,
+                            products: prev.products.map(p => p.id === product.id ? { ...p, activation: e.target.value } : p)
+                          }));
                         }}
                       />
                     </div>
@@ -608,10 +819,13 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                               className="admin-input flex-1" 
                               value={link.label}
                               onChange={e => {
-                                const newLinks = [...product.links];
-                                newLinks[idx].label = e.target.value;
-                                const newProds = data.products.map(p => p.id === product.id ? { ...p, links: newLinks } : p);
-                                setData({ ...data, products: newProds });
+                                setData(prev => ({
+                                  ...prev,
+                                  products: prev.products.map(p => p.id === product.id ? {
+                                    ...p,
+                                    links: p.links.map((l, i) => i === idx ? { ...l, label: e.target.value } : l)
+                                  } : p)
+                                }));
                               }}
                             />
                             <input 
@@ -619,17 +833,24 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                               className="admin-input flex-[2]" 
                               value={link.url}
                               onChange={e => {
-                                const newLinks = [...product.links];
-                                newLinks[idx].url = e.target.value;
-                                const newProds = data.products.map(p => p.id === product.id ? { ...p, links: newLinks } : p);
-                                setData({ ...data, products: newProds });
+                                setData(prev => ({
+                                  ...prev,
+                                  products: prev.products.map(p => p.id === product.id ? {
+                                    ...p,
+                                    links: p.links.map((l, i) => i === idx ? { ...l, url: e.target.value } : l)
+                                  } : p)
+                                }));
                               }}
                             />
                             <button 
                               onClick={() => {
-                                const newLinks = product.links.filter((_, i) => i !== idx);
-                                const newProds = data.products.map(p => p.id === product.id ? { ...p, links: newLinks } : p);
-                                setData({ ...data, products: newProds });
+                                setData(prev => ({
+                                  ...prev,
+                                  products: prev.products.map(p => p.id === product.id ? {
+                                    ...p,
+                                    links: p.links.filter((_, i) => i !== idx)
+                                  } : p)
+                                }));
                               }}
                               className="text-red-500 p-2"
                             >
@@ -639,9 +860,13 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                         ))}
                         <button 
                           onClick={() => {
-                            const newLinks = [...product.links, { label: "", url: "" }];
-                            const newProds = data.products.map(p => p.id === product.id ? { ...p, links: newLinks } : p);
-                            setData({ ...data, products: newProds });
+                            setData(prev => ({
+                              ...prev,
+                              products: prev.products.map(p => p.id === product.id ? {
+                                ...p,
+                                links: [...p.links, { label: "", url: "" }]
+                              } : p)
+                            }));
                           }}
                           className="text-xs font-bold text-khepre-gold flex items-center gap-1 mt-2"
                         >
@@ -654,7 +879,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                       <button 
                         onClick={() => {
                           if (confirm("Tem certeza que deseja excluir este produto?")) {
-                            setData({ ...data, products: data.products.filter(p => p.id !== product.id) });
+                            setData(prev => ({
+                              ...prev,
+                              products: prev.products.filter(p => p.id !== product.id)
+                            }));
                           }
                         }}
                         className="text-red-500 flex items-center gap-2 text-sm font-bold"
@@ -676,14 +904,15 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
               <div className="space-y-4">
                 <FilePicker 
                   label="Imagem do Banner" 
-                  onFileSelect={base64 => setData({ ...data, banner: { ...data.banner, imageUrl: base64 } })} 
+                  uniqueId="banner-image"
+                  onFileSelect={base64 => setData(prev => ({ ...prev, banner: { ...prev.banner, imageUrl: base64 } }))} 
                 />
                 <div className="pt-2">
                   <label className="admin-label">Ou URL da Imagem</label>
                   <input 
                     className="admin-input" 
                     value={data.banner.imageUrl} 
-                    onChange={e => setData({ ...data, banner: { ...data.banner, imageUrl: e.target.value } })}
+                    onChange={e => setData(prev => ({ ...prev, banner: { ...prev.banner, imageUrl: e.target.value } }))}
                   />
                 </div>
                 {data.banner.imageUrl && <img src={data.banner.imageUrl} className="w-full aspect-video object-cover rounded-xl shadow-lg" />}
@@ -691,19 +920,19 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
               <div className="space-y-4">
                 <div>
                   <label className="admin-label">Título (Linha 1)</label>
-                  <input className="admin-input" value={data.banner.title} onChange={e => setData({ ...data, banner: { ...data.banner, title: e.target.value } })} />
+                  <input className="admin-input" value={data.banner.title} onChange={e => setData(prev => ({ ...prev, banner: { ...prev.banner, title: e.target.value } }))} />
                 </div>
                 <div>
                   <label className="admin-label">Subtítulo (Destaque)</label>
-                  <input className="admin-input" value={data.banner.subtitle} onChange={e => setData({ ...data, banner: { ...data.banner, subtitle: e.target.value } })} />
+                  <input className="admin-input" value={data.banner.subtitle} onChange={e => setData(prev => ({ ...prev, banner: { ...prev.banner, subtitle: e.target.value } }))} />
                 </div>
                 <div>
                   <label className="admin-label">Descrição</label>
-                  <textarea className="admin-input h-32" value={data.banner.description} onChange={e => setData({ ...data, banner: { ...data.banner, description: e.target.value } })} />
+                  <textarea className="admin-input h-32" value={data.banner.description} onChange={e => setData(prev => ({ ...prev, banner: { ...prev.banner, description: e.target.value } }))} />
                 </div>
                 <div>
                   <label className="admin-label">Texto do Botão</label>
-                  <input className="admin-input" value={data.banner.buttonText} onChange={e => setData({ ...data, banner: { ...data.banner, buttonText: e.target.value } })} />
+                  <input className="admin-input" value={data.banner.buttonText} onChange={e => setData(prev => ({ ...prev, banner: { ...prev.banner, buttonText: e.target.value } }))} />
                 </div>
               </div>
             </div>
@@ -717,14 +946,15 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
               <div className="space-y-4">
                 <FilePicker 
                   label="Foto da Terapeuta" 
-                  onFileSelect={base64 => setData({ ...data, therapist: { ...data.therapist, imageUrl: base64 } })} 
+                  uniqueId="therapist-photo"
+                  onFileSelect={base64 => setData(prev => ({ ...prev, therapist: { ...prev.therapist, imageUrl: base64 } }))} 
                 />
                 <div className="pt-2">
                   <label className="admin-label">Ou URL da Foto</label>
                   <input 
                     className="admin-input" 
                     value={data.therapist.imageUrl} 
-                    onChange={e => setData({ ...data, therapist: { ...data.therapist, imageUrl: e.target.value } })}
+                    onChange={e => setData(prev => ({ ...prev, therapist: { ...prev.therapist, imageUrl: e.target.value } }))}
                   />
                 </div>
                 {data.therapist.imageUrl && <img src={data.therapist.imageUrl} className="w-full aspect-square object-cover rounded-xl shadow-lg" />}
@@ -732,24 +962,24 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
               <div className="space-y-4">
                 <div>
                   <label className="admin-label">Nome</label>
-                  <input className="admin-input" value={data.therapist.name} onChange={e => setData({ ...data, therapist: { ...data.therapist, name: e.target.value } })} />
+                  <input className="admin-input" value={data.therapist.name} onChange={e => setData(prev => ({ ...prev, therapist: { ...prev.therapist, name: e.target.value } }))} />
                 </div>
                 <div>
                   <label className="admin-label">Cargo/Título</label>
-                  <input className="admin-input" value={data.therapist.role} onChange={e => setData({ ...data, therapist: { ...data.therapist, role: e.target.value } })} />
+                  <input className="admin-input" value={data.therapist.role} onChange={e => setData(prev => ({ ...prev, therapist: { ...prev.therapist, role: e.target.value } }))} />
                 </div>
                 <div>
                   <label className="admin-label">Descrição/Biografia</label>
-                  <textarea className="admin-input h-32" value={data.therapist.description} onChange={e => setData({ ...data, therapist: { ...data.therapist, description: e.target.value } })} />
+                  <textarea className="admin-input h-32" value={data.therapist.description} onChange={e => setData(prev => ({ ...prev, therapist: { ...prev.therapist, description: e.target.value } }))} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="admin-label">Texto do Botão</label>
-                    <input className="admin-input" value={data.therapist.buttonText} onChange={e => setData({ ...data, therapist: { ...data.therapist, buttonText: e.target.value } })} />
+                    <input className="admin-input" value={data.therapist.buttonText} onChange={e => setData(prev => ({ ...prev, therapist: { ...prev.therapist, buttonText: e.target.value } }))} />
                   </div>
                   <div>
                     <label className="admin-label">URL do Botão</label>
-                    <input className="admin-input" value={data.therapist.buttonUrl} onChange={e => setData({ ...data, therapist: { ...data.therapist, buttonUrl: e.target.value } })} />
+                    <input className="admin-input" value={data.therapist.buttonUrl} onChange={e => setData(prev => ({ ...prev, therapist: { ...prev.therapist, buttonUrl: e.target.value } }))} />
                   </div>
                 </div>
               </div>
@@ -764,12 +994,12 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
               <button 
                 onClick={() => {
                   const newTherapy: Therapy = {
-                    id: Date.now().toString(),
+                    id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                     title: "Nova Terapia",
                     description: "",
                     icon: "Sparkles"
                   };
-                  setData({ ...data, therapies: [...data.therapies, newTherapy] });
+                  setData(prev => ({ ...prev, therapies: [...prev.therapies, newTherapy] }));
                 }}
                 className="bg-khepre-dark text-white px-6 py-2 rounded-full flex items-center gap-2 hover:bg-khepre-olive transition-all"
               >
@@ -787,8 +1017,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                         className="admin-input" 
                         value={therapy.title} 
                         onChange={e => {
-                          const newTherapies = data.therapies.map(t => t.id === therapy.id ? { ...t, title: e.target.value } : t);
-                          setData({ ...data, therapies: newTherapies });
+                          setData(prev => ({
+                            ...prev,
+                            therapies: prev.therapies.map(t => t.id === therapy.id ? { ...t, title: e.target.value } : t)
+                          }));
                         }}
                       />
                     </div>
@@ -798,8 +1030,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                         className="admin-input" 
                         value={therapy.icon} 
                         onChange={e => {
-                          const newTherapies = data.therapies.map(t => t.id === therapy.id ? { ...t, icon: e.target.value } : t);
-                          setData({ ...data, therapies: newTherapies });
+                          setData(prev => ({
+                            ...prev,
+                            therapies: prev.therapies.map(t => t.id === therapy.id ? { ...t, icon: e.target.value } : t)
+                          }));
                         }}
                       >
                         <option value="Sparkles">Sparkles</option>
@@ -819,8 +1053,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                         className="admin-input h-24" 
                         value={therapy.description} 
                         onChange={e => {
-                          const newTherapies = data.therapies.map(t => t.id === therapy.id ? { ...t, description: e.target.value } : t);
-                          setData({ ...data, therapies: newTherapies });
+                          setData(prev => ({
+                            ...prev,
+                            therapies: prev.therapies.map(t => t.id === therapy.id ? { ...t, description: e.target.value } : t)
+                          }));
                         }}
                       />
                     </div>
@@ -828,7 +1064,7 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                       <button 
                         onClick={() => {
                           if (confirm("Excluir esta terapia?")) {
-                            setData({ ...data, therapies: data.therapies.filter(t => t.id !== therapy.id) });
+                            setData(prev => ({ ...prev, therapies: prev.therapies.filter(t => t.id !== therapy.id) }));
                           }
                         }}
                         className="text-red-500 flex items-center gap-2 text-sm font-bold"
@@ -850,13 +1086,13 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
               <button 
                 onClick={() => {
                   const newTest: Testimonial = {
-                    id: Date.now().toString(),
+                    id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                     name: "Novo Cliente",
                     role: "Cliente",
                     text: "",
                     type: 'text'
                   };
-                  setData({ ...data, testimonials: [...data.testimonials, newTest] });
+                  setData(prev => ({ ...prev, testimonials: [...prev.testimonials, newTest] }));
                 }}
                 className="bg-khepre-dark text-white px-6 py-2 rounded-full flex items-center gap-2 hover:bg-khepre-olive transition-all"
               >
@@ -870,8 +1106,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                   <div className="flex gap-4">
                     <button 
                       onClick={() => {
-                        const newTests = data.testimonials.map(t => t.id === test.id ? { ...t, type: 'text' as const } : t);
-                        setData({ ...data, testimonials: newTests });
+                        setData(prev => ({
+                          ...prev,
+                          testimonials: prev.testimonials.map(t => t.id === test.id ? { ...t, type: 'text' as const } : t)
+                        }));
                       }}
                       className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${test.type === 'text' ? 'bg-khepre-gold text-white' : 'bg-gray-100'}`}
                     >
@@ -879,8 +1117,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                     </button>
                     <button 
                       onClick={() => {
-                        const newTests = data.testimonials.map(t => t.id === test.id ? { ...t, type: 'image' as const } : t);
-                        setData({ ...data, testimonials: newTests });
+                        setData(prev => ({
+                          ...prev,
+                          testimonials: prev.testimonials.map(t => t.id === test.id ? { ...t, type: 'image' as const } : t)
+                        }));
                       }}
                       className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${test.type === 'image' ? 'bg-khepre-gold text-white' : 'bg-gray-100'}`}
                     >
@@ -895,8 +1135,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                         className="admin-input" 
                         value={test.name} 
                         onChange={e => {
-                          const newTests = data.testimonials.map(t => t.id === test.id ? { ...t, name: e.target.value } : t);
-                          setData({ ...data, testimonials: newTests });
+                          setData(prev => ({
+                            ...prev,
+                            testimonials: prev.testimonials.map(t => t.id === test.id ? { ...t, name: e.target.value } : t)
+                          }));
                         }}
                       />
                     </div>
@@ -906,8 +1148,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                         className="admin-input" 
                         value={test.role} 
                         onChange={e => {
-                          const newTests = data.testimonials.map(t => t.id === test.id ? { ...t, role: e.target.value } : t);
-                          setData({ ...data, testimonials: newTests });
+                          setData(prev => ({
+                            ...prev,
+                            testimonials: prev.testimonials.map(t => t.id === test.id ? { ...t, role: e.target.value } : t)
+                          }));
                         }}
                       />
                     </div>
@@ -920,8 +1164,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                         className="admin-input h-24" 
                         value={test.text} 
                         onChange={e => {
-                          const newTests = data.testimonials.map(t => t.id === test.id ? { ...t, text: e.target.value } : t);
-                          setData({ ...data, testimonials: newTests });
+                          setData(prev => ({
+                            ...prev,
+                            testimonials: prev.testimonials.map(t => t.id === test.id ? { ...t, text: e.target.value } : t)
+                          }));
                         }}
                       />
                     </div>
@@ -929,9 +1175,12 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                     <div className="space-y-4">
                       <FilePicker 
                         label="Imagem do Relato" 
+                        uniqueId={`testimonial-photo-${test.id}`}
                         onFileSelect={base64 => {
-                          const newTests = data.testimonials.map(t => t.id === test.id ? { ...t, image: base64 } : t);
-                          setData({ ...data, testimonials: newTests });
+                          setData(prev => ({
+                            ...prev,
+                            testimonials: prev.testimonials.map(t => t.id === test.id ? { ...t, image: base64 } : t)
+                          }));
                         }} 
                       />
                       <div>
@@ -940,8 +1189,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                           className="admin-input" 
                           value={test.image} 
                           onChange={e => {
-                            const newTests = data.testimonials.map(t => t.id === test.id ? { ...t, image: e.target.value } : t);
-                            setData({ ...data, testimonials: newTests });
+                            setData(prev => ({
+                              ...prev,
+                              testimonials: prev.testimonials.map(t => t.id === test.id ? { ...t, image: e.target.value } : t)
+                            }));
                           }}
                         />
                       </div>
@@ -953,7 +1204,10 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                     <button 
                       onClick={() => {
                         if (confirm("Excluir este relato?")) {
-                          setData({ ...data, testimonials: data.testimonials.filter(t => t.id !== test.id) });
+                          setData(prev => ({
+                            ...prev,
+                            testimonials: prev.testimonials.filter(t => t.id !== test.id)
+                          }));
                         }
                       }}
                       className="text-red-500 flex items-center gap-2 text-sm font-bold"
@@ -963,6 +1217,73 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'weeklyTopic' && (
+          <div className="space-y-8 max-w-4xl pb-20">
+            <div className="flex justify-between items-end">
+              <div>
+                <h3 className="text-3xl font-serif">Matéria da Semana</h3>
+                <p className="text-gray-500 mt-2">Compartilhe conteúdos interessantes com seus clientes.</p>
+              </div>
+              <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-100">
+                <span className="text-sm font-bold text-gray-600">Ativar Seção</span>
+                <button 
+                  onClick={() => setData(prev => ({ ...prev, weeklyTopic: { ...prev.weeklyTopic, active: !prev.weeklyTopic.active } }))}
+                  className={`w-12 h-6 rounded-full transition-all relative ${data.weeklyTopic.active ? 'bg-green-500' : 'bg-gray-300'}`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${data.weeklyTopic.active ? 'left-7' : 'left-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+              <div>
+                <label className="admin-label">Título da Matéria</label>
+                <input 
+                  className="admin-input" 
+                  value={data.weeklyTopic.title} 
+                  onChange={e => setData(prev => ({ ...prev, weeklyTopic: { ...prev.weeklyTopic, title: e.target.value } }))}
+                  placeholder="Ex: O Poder dos Cristais no Dia a Dia"
+                />
+              </div>
+
+              <div>
+                <label className="admin-label">Conteúdo da Matéria</label>
+                <textarea 
+                  className="admin-input min-h-[200px]" 
+                  value={data.weeklyTopic.content} 
+                  onChange={e => setData(prev => ({ ...prev, weeklyTopic: { ...prev.weeklyTopic, content: e.target.value } }))}
+                  placeholder="Escreva aqui o conteúdo da sua matéria..."
+                />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-8">
+                <div>
+                  <FilePicker 
+                    label="Imagem da Matéria" 
+                    uniqueId="weekly-topic-image"
+                    onFileSelect={base64 => setData(prev => ({ ...prev, weeklyTopic: { ...prev.weeklyTopic, image: base64 } }))} 
+                  />
+                  <div className="mt-4">
+                    <label className="admin-label">Ou URL da Imagem</label>
+                    <input 
+                      className="admin-input" 
+                      value={data.weeklyTopic.image} 
+                      onChange={e => setData(prev => ({ ...prev, weeklyTopic: { ...prev.weeklyTopic, image: e.target.value } }))}
+                    />
+                  </div>
+                </div>
+                <div>
+                  {data.weeklyTopic.image && (
+                    <div className="aspect-video rounded-xl overflow-hidden shadow-lg border border-gray-100">
+                      <img src={data.weeklyTopic.image} className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1021,7 +1342,8 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                     </p>
                     <ul className="text-[10px] text-blue-700 mt-2 list-disc pl-4 space-y-1">
                       <li>Entre no painel pelo celular e insira as mesmas chaves uma única vez.</li>
-                      <li><strong>Recomendado:</strong> Adicione as chaves <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_ANON_KEY</code> nos <strong>Secrets (Configurações)</strong> do AI Studio. Assim o site já abrirá configurado em qualquer dispositivo automaticamente.</li>
+                      <li><strong>Se usar AI Studio:</strong> Adicione as chaves <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_ANON_KEY</code> nos <b>Secrets (Configurações)</b>.</li>
+                      <li><strong>Se usar Netlify:</strong> Vá em <b>Site settings</b> → <b>Environment variables</b> e adicione as duas chaves lá. Depois faça um novo deploy.</li>
                     </ul>
                   </div>
                 </div>
@@ -1093,14 +1415,15 @@ create policy "Acesso público total" on khepre_cms for all using (true) with ch
               <div className="space-y-4">
                 <FilePicker 
                   label="Logo da Marca" 
-                  onFileSelect={base64 => setData({ ...data, logoUrl: base64 })} 
+                  uniqueId="settings-logo"
+                  onFileSelect={base64 => setData(prev => ({ ...prev, logoUrl: base64 }))} 
                 />
                 <div>
                   <label className="admin-label">Ou URL do Logo</label>
                   <input 
                     className="admin-input" 
                     value={data.logoUrl} 
-                    onChange={e => setData({ ...data, logoUrl: e.target.value })}
+                    onChange={e => setData(prev => ({ ...prev, logoUrl: e.target.value }))}
                   />
                 </div>
                 {data.logoUrl && <img src={data.logoUrl} className="mt-4 h-16 object-contain" />}
@@ -1190,8 +1513,141 @@ function LoginModal({ onLogin, onClose }: { onLogin: (u: string, p: string) => v
 // --- Landing Page ---
 
 function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () => void }) {
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
   return (
     <>
+      {/* Product Detail Modal */}
+      <AnimatePresence>
+        {selectedProduct && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedProduct(null)}
+              className="absolute inset-0 bg-khepre-dark/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-5xl bg-white rounded-[40px] shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[90vh]"
+            >
+              <button 
+                onClick={() => setSelectedProduct(null)}
+                className="absolute top-6 right-6 z-10 w-10 h-10 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center text-khepre-dark hover:bg-white transition-all shadow-lg"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="md:w-1/2 h-[300px] md:h-auto overflow-y-auto bg-khepre-cream/30 p-4 md:p-8 custom-scrollbar">
+                <div className="space-y-4">
+                  {selectedProduct.images?.map((img, idx) => img && (
+                    <img 
+                      key={idx}
+                      src={img} 
+                      alt={`${selectedProduct.name} ${idx + 1}`} 
+                      className="w-full rounded-2xl shadow-md"
+                      referrerPolicy="no-referrer"
+                    />
+                  ))}
+                  {!selectedProduct.images?.length && selectedProduct.image && (
+                    <img 
+                      src={selectedProduct.image} 
+                      alt={selectedProduct.name} 
+                      className="w-full rounded-2xl shadow-md"
+                      referrerPolicy="no-referrer"
+                    />
+                  )}
+                  {selectedProduct.videoUrl && (
+                    <div className="aspect-video rounded-2xl overflow-hidden shadow-md bg-black">
+                      <iframe 
+                        src={selectedProduct.videoUrl.replace('watch?v=', 'embed/')} 
+                        className="w-full h-full"
+                        allowFullScreen
+                      />
+                    </div>
+                  )}
+                  {selectedProduct.localVideo && (
+                    <div className="aspect-video rounded-2xl overflow-hidden shadow-md bg-black">
+                      <video 
+                        src={selectedProduct.localVideo} 
+                        className="w-full h-full"
+                        controls
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="md:w-1/2 p-8 md:p-12 overflow-y-auto custom-scrollbar flex flex-col">
+                <div className="mb-8">
+                  <span className="text-khepre-gold uppercase tracking-[0.3em] text-xs font-bold mb-2 block">Detalhes do Produto</span>
+                  <h2 className="text-4xl md:text-5xl mb-4">{selectedProduct.name}</h2>
+                  <div className="flex items-center gap-4 mb-6">
+                    {selectedProduct.discountedPrice ? (
+                      <div className="flex items-center gap-3">
+                        <span className="text-3xl font-bold text-khepre-dark">R$ {formatPrice(selectedProduct.discountedPrice)}</span>
+                        <span className="text-xl text-gray-400 line-through">R$ {formatPrice(selectedProduct.price)}</span>
+                      </div>
+                    ) : (
+                      <span className="text-3xl font-bold text-khepre-dark">R$ {formatPrice(selectedProduct.price)}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-8 mb-12">
+                  <div>
+                    <h4 className="text-sm font-bold uppercase tracking-widest text-khepre-dark/40 mb-3">Descrição</h4>
+                    <p className="text-khepre-dark/70 leading-relaxed whitespace-pre-wrap">
+                      {selectedProduct.fullDescription || selectedProduct.description}
+                    </p>
+                  </div>
+
+                  <div className="p-6 bg-khepre-cream rounded-2xl border border-khepre-gold/10">
+                    <h4 className="text-xs font-bold uppercase tracking-widest text-khepre-gold mb-3">Ritual de Ativação</h4>
+                    <p className="italic text-khepre-olive mb-4">"{selectedProduct.activation}"</p>
+                    {selectedProduct.instructions && (
+                      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-khepre-gold/10">
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-khepre-dark/40 mb-1 font-bold">Aplicação</p>
+                          <p className="text-xs text-khepre-dark/70 leading-tight">{selectedProduct.instructions.aplicacao}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-khepre-dark/40 mb-1 font-bold">Fechamento</p>
+                          <p className="text-xs text-khepre-dark/70 leading-tight">{selectedProduct.instructions.fechamento}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-auto space-y-3">
+                  <a 
+                    href={`${data.socialLinks.whatsapp}?text=${encodeURIComponent(`Olá! Gostaria de comprar o produto: ${selectedProduct.name}`)}`}
+                    target="_blank"
+                    className="w-full flex items-center justify-center gap-3 bg-khepre-dark text-white py-5 rounded-2xl font-bold hover:bg-khepre-olive transition-all shadow-lg hover:shadow-khepre-olive/20"
+                  >
+                    <MessageCircle size={20} /> Comprar via WhatsApp
+                  </a>
+                  {selectedProduct.links.map((link, idx) => (
+                    <a 
+                      key={idx}
+                      href={link.url}
+                      target="_blank"
+                      className="w-full flex items-center justify-center gap-3 bg-khepre-cream text-khepre-dark py-4 rounded-2xl font-bold hover:bg-khepre-dark/10 transition-all"
+                    >
+                      <LinkIcon size={18} /> {link.label}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Navigation */}
       <nav className="relative w-full z-50 bg-khepre-yellow border-b border-khepre-dark/10">
         <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 flex items-center justify-between">
@@ -1263,12 +1719,14 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
             className="relative"
           >
             <div className="aspect-[4/5] bg-khepre-yellow/10 rounded-[40px] overflow-hidden relative">
-              <img 
-                src={data.banner.imageUrl} 
-                alt="KHEPRE Banner" 
-                className="w-full h-full object-cover mix-blend-multiply opacity-90"
-                referrerPolicy="no-referrer"
-              />
+              {data.banner.imageUrl && (
+                <img 
+                  src={data.banner.imageUrl} 
+                  alt="KHEPRE Banner" 
+                  className="w-full h-full object-cover mix-blend-multiply opacity-90"
+                  referrerPolicy="no-referrer"
+                />
+              )}
               <div className="absolute inset-0 bg-gradient-to-t from-khepre-cream/80 to-transparent" />
             </div>
             <motion.div 
@@ -1323,15 +1781,23 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
               <motion.div 
                 key={product.id}
                 whileHover={{ y: -10 }}
-                className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-khepre-dark/5 flex flex-col"
+                onClick={() => setSelectedProduct(product)}
+                className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-khepre-dark/5 flex flex-col cursor-pointer group"
               >
-                  <div className="aspect-square overflow-hidden relative group">
-                    <img 
-                      src={product.image} 
-                      alt={product.name} 
-                      className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                      referrerPolicy="no-referrer"
-                    />
+                  <div className="aspect-square overflow-hidden relative">
+                    {product.image && (
+                      <img 
+                        src={product.image} 
+                        alt={product.name} 
+                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <div className="bg-white/90 backdrop-blur-sm px-6 py-2 rounded-full font-bold text-sm shadow-xl flex items-center gap-2">
+                        <Sparkles size={16} className="text-khepre-gold" /> Ver Detalhes
+                      </div>
+                    </div>
                     <div className="absolute top-4 right-4 flex flex-col items-end gap-2">
                       {product.discountedPrice ? (
                         <>
@@ -1352,26 +1818,16 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
                   </div>
                 <div className="p-8 flex-1 flex flex-col">
                   <h3 className="text-2xl mb-3">{product.name}</h3>
-                  <p className="text-sm text-khepre-dark/60 mb-6 leading-relaxed">
-                    {product.description}
+                  <p className="text-sm text-khepre-dark/60 mb-6 leading-relaxed line-clamp-3">
+                    {product.shortDescription}
                   </p>
                   
                   <div className="mt-auto pt-6 border-t border-khepre-dark/5">
                     <p className="text-[10px] uppercase tracking-widest text-khepre-dark/40 mb-2 font-bold">Ritual de Ativação</p>
                     <p className="text-sm italic text-khepre-olive mb-3">"{product.activation}"</p>
-                    {product.instructions && (
-                      <div className="space-y-2">
-                        <p className="text-[10px] text-khepre-dark/40 leading-tight">
-                          <span className="font-bold">Aplicação:</span> {product.instructions.aplicacao}
-                        </p>
-                        <p className="text-[10px] text-khepre-dark/40 leading-tight">
-                          <span className="font-bold">Fechamento:</span> {product.instructions.fechamento}
-                        </p>
-                      </div>
-                    )}
                   </div>
 
-                  <div className="mt-8 space-y-2">
+                  <div className="mt-8 space-y-2" onClick={e => e.stopPropagation()}>
                     <a 
                       href={`${data.socialLinks.whatsapp}?text=${encodeURIComponent(`Olá! Gostaria de saber mais sobre o produto: ${product.name}`)}`}
                       target="_blank"
@@ -1379,16 +1835,6 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
                     >
                       <MessageCircle size={16} /> Comprar via WhatsApp
                     </a>
-                    {product.links.map((link, idx) => (
-                      <a 
-                        key={idx}
-                        href={link.url}
-                        target="_blank"
-                        className="w-full flex items-center justify-center gap-2 bg-khepre-cream text-khepre-dark py-3 rounded-xl font-bold hover:bg-khepre-dark/10 transition-all text-sm"
-                      >
-                        <LinkIcon size={16} /> {link.label}
-                      </a>
-                    ))}
                   </div>
                 </div>
               </motion.div>
@@ -1463,12 +1909,14 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
             
             <div className="relative">
               <div className="aspect-square rounded-[32px] overflow-hidden shadow-2xl border-8 border-white">
-                <img 
-                  src={data.therapist.imageUrl} 
-                  alt={data.therapist.name} 
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
+                {data.therapist.imageUrl && (
+                  <img 
+                    src={data.therapist.imageUrl} 
+                    alt={data.therapist.name} 
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                )}
               </div>
               <div className="absolute -bottom-6 -right-6 bg-khepre-dark text-white p-6 rounded-2xl shadow-xl">
                 <p className="text-xs uppercase tracking-widest font-bold text-khepre-gold mb-1">Desenvolvido por</p>
@@ -1539,6 +1987,63 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
           </div>
         </div>
       </section>
+
+      {/* Weekly Topic Section */}
+      {data.weeklyTopic?.active && (
+        <section className="py-24 bg-white overflow-hidden">
+          <div className="max-w-7xl mx-auto px-6">
+            <div className="grid md:grid-cols-2 gap-16 items-center">
+              <motion.div 
+                initial={{ opacity: 0, x: -30 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                className="relative"
+              >
+                <div className="aspect-square rounded-[48px] overflow-hidden shadow-2xl">
+                  {data.weeklyTopic.image && (
+                    <img 
+                      src={data.weeklyTopic.image} 
+                      alt={data.weeklyTopic.title} 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  )}
+                </div>
+                <div className="absolute -bottom-6 -right-6 bg-khepre-gold text-white p-8 rounded-3xl shadow-xl max-w-[240px]">
+                  <Sparkles size={32} className="mb-4" />
+                  <p className="font-serif text-xl leading-tight">Conteúdo exclusivo da semana.</p>
+                </div>
+              </motion.div>
+
+              <motion.div 
+                initial={{ opacity: 0, x: 30 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                className="space-y-8"
+              >
+                <span className="text-khepre-gold uppercase tracking-[0.3em] text-sm font-bold block">
+                  Matéria da Semana
+                </span>
+                <h2 className="text-5xl font-serif leading-tight">
+                  {data.weeklyTopic.title}
+                </h2>
+                <div className="text-lg text-khepre-dark/70 leading-relaxed space-y-4 whitespace-pre-wrap">
+                  {data.weeklyTopic.content}
+                </div>
+                <div className="pt-4">
+                  <a 
+                    href={data.socialLinks.whatsapp} 
+                    target="_blank"
+                    className="inline-flex items-center gap-3 border-2 border-khepre-dark text-khepre-dark px-10 py-4 rounded-full font-bold hover:bg-khepre-dark hover:text-white transition-all"
+                  >
+                    <MessageCircle size={20} /> Conversar sobre este assunto
+                  </a>
+                </div>
+              </motion.div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Footer */}
       <footer id="contato" className="bg-white pt-24 pb-12 border-t border-khepre-dark/5">
