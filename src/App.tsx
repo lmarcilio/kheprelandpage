@@ -32,7 +32,9 @@ import {
   Type,
   Video,
   FileText,
-  GripVertical
+  GripVertical,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import {
   DndContext,
@@ -1514,6 +1516,32 @@ function LoginModal({ onLogin, onClose }: { onLogin: (u: string, p: string) => v
 
 function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () => void }) {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+
+  const mediaList = selectedProduct ? [
+    ...(selectedProduct.videoUrl || selectedProduct.localVideo ? [{ 
+      type: 'video' as const, 
+      url: selectedProduct.videoUrl || selectedProduct.localVideo, 
+      isLocal: !!selectedProduct.localVideo 
+    }] : []),
+    ...(selectedProduct.images && selectedProduct.images.length > 0 
+      ? selectedProduct.images.filter(img => !!img).map(img => ({ type: 'image' as const, url: img }))
+      : selectedProduct.image ? [{ type: 'image' as const, url: selectedProduct.image }] : [])
+  ] : [];
+
+  useEffect(() => {
+    if (selectedProduct) {
+      setActiveMediaIndex(0);
+    }
+  }, [selectedProduct]);
+
+  const nextMedia = () => {
+    setActiveMediaIndex((prev) => (prev + 1) % mediaList.length);
+  };
+
+  const prevMedia = () => {
+    setActiveMediaIndex((prev) => (prev - 1 + mediaList.length) % mediaList.length);
+  };
 
   return (
     <>
@@ -1541,44 +1569,87 @@ function LandingPage({ data, onAdminClick }: { data: CMSData; onAdminClick: () =
                 <X size={20} />
               </button>
 
-              <div className="md:w-1/2 h-[300px] md:h-auto overflow-y-auto bg-khepre-cream/30 p-4 md:p-8 custom-scrollbar">
-                <div className="space-y-4">
-                  {selectedProduct.images?.map((img, idx) => img && (
-                    <img 
-                      key={idx}
-                      src={img} 
-                      alt={`${selectedProduct.name} ${idx + 1}`} 
-                      className="w-full rounded-2xl shadow-md"
-                      referrerPolicy="no-referrer"
-                    />
-                  ))}
-                  {!selectedProduct.images?.length && selectedProduct.image && (
-                    <img 
-                      src={selectedProduct.image} 
-                      alt={selectedProduct.name} 
-                      className="w-full rounded-2xl shadow-md"
-                      referrerPolicy="no-referrer"
-                    />
-                  )}
-                  {selectedProduct.videoUrl && (
-                    <div className="aspect-video rounded-2xl overflow-hidden shadow-md bg-black">
-                      <iframe 
-                        src={selectedProduct.videoUrl.replace('watch?v=', 'embed/')} 
-                        className="w-full h-full"
-                        allowFullScreen
-                      />
-                    </div>
-                  )}
-                  {selectedProduct.localVideo && (
-                    <div className="aspect-video rounded-2xl overflow-hidden shadow-md bg-black">
-                      <video 
-                        src={selectedProduct.localVideo} 
-                        className="w-full h-full"
-                        controls
-                      />
-                    </div>
+              <div className="md:w-1/2 flex flex-col bg-khepre-cream/30">
+                {/* Main Media View */}
+                <div className="relative aspect-square md:aspect-auto md:flex-1 bg-black flex items-center justify-center overflow-hidden">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={activeMediaIndex}
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="w-full h-full flex items-center justify-center"
+                    >
+                      {mediaList[activeMediaIndex]?.type === 'video' ? (
+                        mediaList[activeMediaIndex].isLocal ? (
+                          <video 
+                            src={mediaList[activeMediaIndex].url} 
+                            className="w-full h-full object-contain"
+                            controls
+                            autoPlay
+                          />
+                        ) : (
+                          <iframe 
+                            src={`${mediaList[activeMediaIndex].url.replace('watch?v=', 'embed/')}?autoplay=1&mute=1`} 
+                            className="w-full h-full"
+                            allowFullScreen
+                            allow="autoplay"
+                          />
+                        )
+                      ) : (
+                        <img 
+                          src={mediaList[activeMediaIndex]?.url} 
+                          alt={selectedProduct.name}
+                          className="w-full h-full object-contain"
+                          referrerPolicy="no-referrer"
+                        />
+                      )}
+                    </motion.div>
+                  </AnimatePresence>
+
+                  {/* Navigation Arrows */}
+                  {mediaList.length > 1 && (
+                    <>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); prevMedia(); }}
+                        className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/20 hover:bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white transition-all z-10"
+                      >
+                        <ChevronLeft size={24} />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); nextMedia(); }}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/20 hover:bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white transition-all z-10"
+                      >
+                        <ChevronRight size={24} />
+                      </button>
+                    </>
                   )}
                 </div>
+
+                {/* Thumbnails */}
+                {mediaList.length > 1 && (
+                  <div className="p-4 bg-white/50 backdrop-blur-sm border-t border-khepre-gold/10 overflow-x-auto custom-scrollbar flex gap-3">
+                    {mediaList.map((media, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setActiveMediaIndex(idx)}
+                        className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${activeMediaIndex === idx ? 'border-khepre-gold scale-105 shadow-md' : 'border-transparent opacity-60 hover:opacity-100'}`}
+                      >
+                        {media.type === 'video' ? (
+                          <div className="w-full h-full bg-khepre-dark flex items-center justify-center text-white">
+                            <Video size={20} />
+                          </div>
+                        ) : (
+                          <img 
+                            src={media.url} 
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="md:w-1/2 p-8 md:p-12 overflow-y-auto custom-scrollbar flex flex-col">
