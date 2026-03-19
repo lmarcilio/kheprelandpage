@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback, ChangeEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { supabase, hasValidSupabaseConfig } from "./lib/supabase";
+import { supabase, hasValidSupabaseConfig, updateSupabaseConfig } from "./lib/supabase";
 import { 
   Wind, 
   Moon, 
@@ -210,6 +210,8 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [supabaseError, setSupabaseError] = useState<string | null>(null);
+  const [showErrorScreen, setShowErrorScreen] = useState(false);
 
   // Fetch from Supabase on mount
   useEffect(() => {
@@ -219,33 +221,73 @@ export default function App() {
     }
 
     const fetchData = async () => {
+      // Set a timeout to avoid infinite loading
+      const timeoutId = setTimeout(() => {
+        if (isLoading) {
+          setSupabaseError("A conexão com o Supabase está demorando muito. Verifique sua internet ou as chaves configuradas.");
+          setShowErrorScreen(true);
+        }
+      }, 10000);
+
       try {
+        if (!supabase) {
+          throw new Error("Cliente Supabase não inicializado.");
+        }
+
         const { data, error } = await supabase
           .from('khepre_cms')
           .select('data')
           .eq('id', 1)
           .single();
 
-        if (data && !error) {
+        if (error) {
+          if (error.code === 'PGRST116') {
+            // No data found, use default
+            setSupabaseError(null);
+          } else if (error.code === '42P01') {
+            // Relation does not exist
+            setSupabaseError("Tabela 'khepre_cms' não encontrada no seu banco de dados Supabase.");
+            setShowErrorScreen(true);
+          } else {
+            setSupabaseError(`Erro Supabase (${error.code}): ${error.message}`);
+            setShowErrorScreen(true);
+          }
+        } else if (data) {
           // Merge with INITIAL_DATA to ensure new fields are present
-          const parsed = data.data;
+          const parsed = data.data || {};
+          
+          // Robust merging
+          const mergedProducts = (Array.isArray(parsed.products) ? parsed.products : INITIAL_DATA.products).map((p: any) => ({
+            ...p,
+            id: p.id || Date.now().toString() + Math.random(),
+            name: p.name || "Produto sem nome",
+            description: p.description || "",
+            image: p.image || "",
+            price: typeof p.price === 'number' ? p.price : Number(p.price) || 0,
+            discountedPrice: p.discountedPrice !== undefined ? (typeof p.discountedPrice === 'number' ? p.discountedPrice : Number(p.discountedPrice) || 0) : undefined,
+            benefits: Array.isArray(p.benefits) ? p.benefits : [],
+            activation: p.activation || "",
+            links: Array.isArray(p.links) ? p.links : []
+          }));
+
           setCmsData({
             ...INITIAL_DATA,
             ...parsed,
-            products: (parsed.products || INITIAL_DATA.products).map((p: any) => ({
-              ...p,
-              price: typeof p.price === 'number' ? p.price : Number(p.price) || 0,
-              discountedPrice: p.discountedPrice !== undefined ? (typeof p.discountedPrice === 'number' ? p.discountedPrice : Number(p.discountedPrice) || 0) : undefined
-            })),
+            products: mergedProducts,
             banner: parsed.banner ? { ...INITIAL_DATA.banner, ...parsed.banner } : INITIAL_DATA.banner,
             therapist: parsed.therapist ? { ...INITIAL_DATA.therapist, ...parsed.therapist } : INITIAL_DATA.therapist,
-            therapies: parsed.therapies || INITIAL_DATA.therapies,
+            therapies: Array.isArray(parsed.therapies) ? parsed.therapies : INITIAL_DATA.therapies,
+            testimonials: Array.isArray(parsed.testimonials) ? parsed.testimonials : INITIAL_DATA.testimonials,
             socialLinks: parsed.socialLinks ? { ...INITIAL_DATA.socialLinks, ...parsed.socialLinks } : INITIAL_DATA.socialLinks
           });
+          setSupabaseError(null);
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error("Error fetching from Supabase:", e);
+        setSupabaseError(e.message || "Erro desconhecido ao conectar com Supabase.");
+        setShowErrorScreen(true);
       } finally {
+        clearTimeout(timeoutId);
         setIsLoading(false);
       }
     };
@@ -283,57 +325,6 @@ export default function App() {
     }
   };
 
-  if (!hasValidSupabaseConfig) {
-    return (
-      <div className="min-h-screen bg-khepre-cream flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white p-8 rounded-[32px] shadow-xl border border-khepre-dark/5 text-center">
-          <div className="w-16 h-16 bg-khepre-yellow/30 rounded-2xl flex items-center justify-center text-khepre-gold mb-6 mx-auto">
-            <ShieldCheck size={32} />
-          </div>
-          <h2 className="text-2xl font-serif font-bold text-khepre-dark mb-4">Configuração do Supabase Necessária</h2>
-          <p className="text-khepre-dark/60 text-sm mb-6 leading-relaxed">
-            Para que as informações sejam sincronizadas entre dispositivos, você precisa adicionar as chaves do Supabase nos Segredos do AI Studio.
-          </p>
-          <div className="text-left space-y-4 mb-8">
-            <div className="flex gap-3">
-              <div className="w-6 h-6 rounded-full bg-khepre-gold text-white flex items-center justify-center text-xs font-bold flex-shrink-0">1</div>
-              <p className="text-xs text-khepre-dark/80">Abra o menu <b>Settings</b> (ícone de engrenagem <Settings size={12} className="inline" /> no canto superior direito do AI Studio).</p>
-            </div>
-            <div className="flex gap-3">
-              <div className="w-6 h-6 rounded-full bg-khepre-gold text-white flex items-center justify-center text-xs font-bold flex-shrink-0">2</div>
-              <p className="text-xs text-khepre-dark/80">Clique em <b>Secrets</b> e adicione estas duas chaves:</p>
-            </div>
-            <div className="pl-9 space-y-2">
-              <div className="bg-gray-100 p-2 rounded flex justify-between items-center">
-                <code className="text-[10px] font-mono">VITE_SUPABASE_URL</code>
-                <span className="text-[9px] text-gray-400">Sua URL do Projeto</span>
-              </div>
-              <div className="bg-gray-100 p-2 rounded flex justify-between items-center">
-                <code className="text-[10px] font-mono">VITE_SUPABASE_ANON_KEY</code>
-                <span className="text-[9px] text-gray-400">Sua Chave Anon Public</span>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <div className="w-6 h-6 rounded-full bg-khepre-gold text-white flex items-center justify-center text-xs font-bold flex-shrink-0">3</div>
-              <p className="text-xs text-khepre-dark/80">Após colar os valores, pressione <b>Enter</b>. O app irá reiniciar e conectar automaticamente.</p>
-            </div>
-          </div>
-          <div className="bg-blue-50 p-4 rounded-xl text-left">
-            <p className="text-[10px] text-blue-700 font-bold mb-1 flex items-center gap-1">
-              <ShieldCheck size={12} /> Dica de Segurança
-            </p>
-            <p className="text-[9px] text-blue-600 leading-tight">
-              As chaves são inseridas no painel do AI Studio (fora do site) para que fiquem protegidas e não se percam quando você fechar o navegador.
-            </p>
-          </div>
-          <p className="text-[10px] text-khepre-dark/40 italic">
-            * Se você já adicionou e o erro persiste, verifique se não há espaços extras nas chaves.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   if (isAdmin) {
     return (
       <div className="relative">
@@ -342,17 +333,70 @@ export default function App() {
             <Sparkles size={14} className="animate-spin" /> Salvando na nuvem...
           </div>
         )}
-        <AdminPanel data={cmsData} setData={setCmsData} onLogout={() => setIsAdmin(false)} />
+        {!hasValidSupabaseConfig && (
+          <div className="fixed bottom-4 right-4 z-[100] bg-red-500 text-white px-4 py-2 rounded-full text-[10px] font-bold flex items-center gap-2 shadow-lg">
+            <ShieldCheck size={12} /> Nuvem Desconectada - Vá em Configurações
+          </div>
+        )}
+        <AdminPanel 
+          data={cmsData} 
+          setData={setCmsData} 
+          onLogout={() => setIsAdmin(false)} 
+          supabaseError={supabaseError}
+        />
       </div>
     );
   }
 
-  if (isLoading) {
+  if (isLoading || showErrorScreen) {
     return (
-      <div className="min-h-screen bg-khepre-cream flex items-center justify-center">
-        <div className="text-center">
-          <Wind size={48} className="text-khepre-olive animate-spin mb-4 mx-auto" />
-          <p className="text-khepre-dark font-serif tracking-widest">CARREGANDO KHEPRE...</p>
+      <div className="min-h-screen bg-khepre-cream flex items-center justify-center p-6">
+        <div className="text-center max-w-md w-full">
+          {!supabaseError ? (
+            <>
+              <Wind size={48} className="text-khepre-olive animate-spin mb-4 mx-auto" />
+              <p className="text-khepre-dark font-serif tracking-widest">CARREGANDO KHEPRE...</p>
+            </>
+          ) : (
+            <div className="bg-white p-8 rounded-[32px] shadow-xl border border-red-100">
+              <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-500 mb-6 mx-auto">
+                <X size={32} />
+              </div>
+              <h2 className="text-xl font-serif font-bold text-khepre-dark mb-4">Erro de Conexão</h2>
+              <p className="text-khepre-dark/60 text-sm mb-6 leading-relaxed">
+                {supabaseError}
+              </p>
+              
+              <div className="space-y-3">
+                <button 
+                  onClick={() => {
+                    setSupabaseError(null);
+                    setShowErrorScreen(false);
+                    setIsLoading(false);
+                  }}
+                  className="w-full bg-khepre-dark text-white py-3 rounded-xl font-bold text-xs hover:bg-khepre-olive transition-all"
+                >
+                  Continuar com Dados Locais
+                </button>
+                <button 
+                  onClick={() => {
+                    localStorage.removeItem('khepre_supabase_url');
+                    localStorage.removeItem('khepre_supabase_key');
+                    window.location.reload();
+                  }}
+                  className="w-full border border-gray-200 text-gray-500 py-3 rounded-xl font-bold text-xs hover:bg-gray-50 transition-all"
+                >
+                  Resetar Configurações Supabase
+                </button>
+              </div>
+
+              {supabaseError.includes("Tabela 'khepre_cms' não encontrada") && (
+                <p className="mt-6 text-[10px] text-khepre-dark/40 italic">
+                  Dica: Você pode entrar no Painel Admin (usuário/senha padrão) e pegar o script SQL para criar a tabela no seu Supabase.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -373,8 +417,10 @@ export default function App() {
 
 // --- Admin Panel ---
 
-function AdminPanel({ data, setData, onLogout }: { data: CMSData; setData: (d: CMSData) => void; onLogout: () => void }) {
+function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData; setData: (d: CMSData) => void; onLogout: () => void; supabaseError: string | null }) {
   const [activeTab, setActiveTab] = useState<'products' | 'testimonials' | 'banner' | 'therapist' | 'therapies' | 'settings'>('products');
+  const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('khepre_supabase_url') || "");
+  const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('khepre_supabase_key') || "");
 
   const updateSocial = (key: keyof CMSData['socialLinks'], value: string) => {
     setData({ ...data, socialLinks: { ...data.socialLinks, [key]: value } });
@@ -915,10 +961,114 @@ function AdminPanel({ data, setData, onLogout }: { data: CMSData; setData: (d: C
         )}
 
         {activeTab === 'settings' && (
-          <div className="space-y-8 max-w-2xl">
+          <div className="space-y-8 max-w-2xl pb-20">
             <h3 className="text-3xl font-serif">Configurações Gerais</h3>
             
-            <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-8">
+              {/* Supabase Config Section */}
+              <div className="space-y-4 p-6 bg-khepre-yellow/20 rounded-2xl border border-khepre-yellow/30">
+                <h4 className="text-sm font-bold uppercase tracking-widest text-khepre-gold flex items-center gap-2">
+                  <Cloud size={16} /> Sincronização em Nuvem (Supabase)
+                </h4>
+                <p className="text-[10px] text-khepre-dark/60 leading-relaxed">
+                  Insira as chaves do seu projeto Supabase para que as alterações sejam salvas permanentemente e apareçam em todos os dispositivos.
+                </p>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="admin-label">Supabase URL</label>
+                    <input 
+                      className="admin-input bg-white" 
+                      placeholder="https://xxxx.supabase.co"
+                      value={supabaseUrl} 
+                      onChange={e => setSupabaseUrl(e.target.value)} 
+                    />
+                  </div>
+                  <div>
+                    <label className="admin-label">Supabase Anon Key</label>
+                    <input 
+                      type="password"
+                      className="admin-input bg-white" 
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      value={supabaseKey} 
+                      onChange={e => setSupabaseKey(e.target.value)} 
+                    />
+                  </div>
+                  <button 
+                    onClick={() => {
+                      updateSupabaseConfig(supabaseUrl, supabaseKey);
+                      alert("Configurações salvas! O site irá reiniciar.");
+                    }}
+                    className="w-full bg-khepre-gold text-white py-3 rounded-xl font-bold text-xs hover:bg-khepre-dark transition-all flex items-center justify-center gap-2 mt-2"
+                  >
+                    <Save size={14} /> Salvar e Conectar Nuvem
+                  </button>
+                </div>
+
+                {hasValidSupabaseConfig && (
+                  <div className="mt-6 space-y-4 pt-6 border-t border-khepre-gold/20">
+                    <h4 className="text-xs font-bold uppercase tracking-widest text-khepre-gold flex items-center gap-2">
+                      <Settings size={14} /> Configuração do Banco de Dados
+                    </h4>
+                    <div className="bg-green-50 p-4 rounded-xl border border-green-100">
+                      <p className="text-[10px] text-green-700 flex items-center gap-2 font-bold mb-1">
+                        <ShieldCheck size={12} /> Conectado com Sucesso
+                      </p>
+                      <p className="text-[9px] text-green-600 leading-relaxed">
+                        Seu site está pronto para salvar na nuvem. Se as tabelas ainda não foram criadas no seu Supabase, siga as instruções abaixo.
+                      </p>
+                    </div>
+
+                    {supabaseError && (
+                      <div className="bg-red-50 p-4 rounded-xl border border-red-100 mt-4">
+                        <p className="text-[10px] text-red-700 flex items-center gap-2 font-bold mb-1">
+                          <X size={12} /> Erro na Tabela
+                        </p>
+                        <p className="text-[9px] text-red-600 leading-relaxed">
+                          {supabaseError}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <label className="admin-label text-khepre-dark">Script SQL para Criar Tabelas</label>
+                      <p className="text-[9px] text-gray-500 mb-2">
+                        Copie o código abaixo, vá no seu painel do Supabase → <b>SQL Editor</b> → <b>New Query</b>, cole e clique em <b>Run</b>.
+                      </p>
+                      <div className="relative group">
+                        <pre className="bg-gray-900 text-gray-300 p-4 rounded-xl text-[9px] overflow-x-auto font-mono leading-relaxed max-h-40">
+{`-- Cria a tabela para armazenar os dados do site
+create table if not exists khepre_cms (
+  id int primary key default 1,
+  data jsonb not null,
+  updated_at timestamp with time zone default now()
+);
+
+-- Insere a linha inicial de dados
+insert into khepre_cms (id, data) 
+values (1, '{}')
+on conflict (id) do nothing;
+
+-- Habilita o acesso público para leitura e escrita
+alter table khepre_cms enable row level security;
+create policy "Acesso público total" on khepre_cms for all using (true) with check (true);`}
+                        </pre>
+                        <button 
+                          onClick={() => {
+                            const sql = `-- Cria a tabela para armazenar os dados do site\ncreate table if not exists khepre_cms (\n  id int primary key default 1,\n  data jsonb not null,\n  updated_at timestamp with time zone default now()\n);\n\n-- Insere a linha inicial de dados\ninsert into khepre_cms (id, data) \nvalues (1, '{}')\non conflict (id) do nothing;\n\n-- Habilita o acesso público para leitura e escrita\nalter table khepre_cms enable row level security;\ncreate policy "Acesso público total" on khepre_cms for all using (true) with check (true);`;
+                            navigator.clipboard.writeText(sql);
+                            alert("Script SQL copiado!");
+                          }}
+                          className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded text-[8px] transition-all"
+                        >
+                          Copiar SQL
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-4">
                 <FilePicker 
                   label="Logo da Marca" 
@@ -952,56 +1102,6 @@ function AdminPanel({ data, setData, onLogout }: { data: CMSData; setData: (d: C
                 <div>
                   <label className="admin-label">Link Shopee</label>
                   <input className="admin-input" value={data.socialLinks.shopee} onChange={e => updateSocial('shopee', e.target.value)} />
-                </div>
-              </div>
-
-              <div className="space-y-4 pt-6">
-                <h4 className="text-sm font-bold uppercase tracking-widest text-khepre-gold border-b border-khepre-gold/20 pb-2 flex items-center gap-2">
-                  <Cloud size={16} /> Status da Nuvem (Supabase)
-                </h4>
-                <div className="bg-green-50 p-4 rounded-xl border border-green-100">
-                  <p className="text-xs text-green-700 flex items-center gap-2 font-bold mb-2">
-                    <ShieldCheck size={14} /> Conectado com Sucesso
-                  </p>
-                  <p className="text-[10px] text-green-600 leading-relaxed">
-                    Seu site está salvando os dados na nuvem. Se as tabelas ainda não foram criadas no seu Supabase, siga as instruções abaixo.
-                  </p>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="admin-label text-khepre-dark">Script SQL para Criar Tabelas</label>
-                  <p className="text-[10px] text-gray-500 mb-2">
-                    Copie o código abaixo, vá no seu painel do Supabase → <b>SQL Editor</b> → <b>New Query</b>, cole e clique em <b>Run</b>.
-                  </p>
-                  <div className="relative group">
-                    <pre className="bg-gray-900 text-gray-300 p-4 rounded-xl text-[10px] overflow-x-auto font-mono leading-relaxed">
-{`-- Cria a tabela para armazenar os dados do site
-create table if not exists khepre_cms (
-  id int primary key default 1,
-  data jsonb not null,
-  updated_at timestamp with time zone default now()
-);
-
--- Insere a linha inicial de dados
-insert into khepre_cms (id, data) 
-values (1, '{}')
-on conflict (id) do nothing;
-
--- Habilita o acesso público para leitura e escrita
-alter table khepre_cms enable row level security;
-create policy "Acesso público total" on khepre_cms for all using (true) with check (true);`}
-                    </pre>
-                    <button 
-                      onClick={() => {
-                        const sql = `-- Cria a tabela para armazenar os dados do site\ncreate table if not exists khepre_cms (\n  id int primary key default 1,\n  data jsonb not null,\n  updated_at timestamp with time zone default now()\n);\n\n-- Insere a linha inicial de dados\ninsert into khepre_cms (id, data) \nvalues (1, '{}')\non conflict (id) do nothing;\n\n-- Habilita o acesso público para leitura e escrita\nalter table khepre_cms enable row level security;\ncreate policy "Acesso público total" on khepre_cms for all using (true) with check (true);`;
-                        navigator.clipboard.writeText(sql);
-                        alert("Script SQL copiado!");
-                      }}
-                      className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded text-[9px] transition-all"
-                    >
-                      Copiar SQL
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
