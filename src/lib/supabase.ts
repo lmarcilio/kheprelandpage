@@ -8,8 +8,8 @@ const getSupabaseConfig = () => {
   const localKey = typeof window !== 'undefined' ? localStorage.getItem('khepre_supabase_key') : null;
 
   return {
-    url: envUrl || localUrl || '',
-    key: envKey || localKey || ''
+    url: localUrl || envUrl || '',
+    key: localKey || envKey || ''
   };
 };
 

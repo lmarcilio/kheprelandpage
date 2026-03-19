@@ -26,6 +26,7 @@ import {
   Edit2,
   Save,
   X,
+  Smartphone,
   Link as LinkIcon,
   Image as ImageIcon,
   Type
@@ -377,6 +378,12 @@ export default function App() {
                   className="w-full bg-khepre-dark text-white py-3 rounded-xl font-bold text-xs hover:bg-khepre-olive transition-all"
                 >
                   Continuar com Dados Locais
+                </button>
+                <button 
+                  onClick={() => window.location.reload()}
+                  className="w-full border border-khepre-gold text-khepre-gold py-3 rounded-xl font-bold text-xs hover:bg-khepre-gold/5 transition-all"
+                >
+                  Tentar Novamente
                 </button>
                 <button 
                   onClick={() => {
@@ -1003,6 +1010,20 @@ function AdminPanel({ data, setData, onLogout, supabaseError }: { data: CMSData;
                   >
                     <Save size={14} /> Salvar e Conectar Nuvem
                   </button>
+
+                  <div className="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-100">
+                    <h5 className="text-xs font-bold text-blue-800 mb-2 flex items-center gap-2">
+                      <Smartphone size={14} /> Dica para Mobile (Celular)
+                    </h5>
+                    <p className="text-[10px] text-blue-700 leading-relaxed">
+                      As chaves inseridas acima ficam salvas apenas <strong>neste navegador</strong>. 
+                      Para que as alterações apareçam no seu celular, você tem duas opções:
+                    </p>
+                    <ul className="text-[10px] text-blue-700 mt-2 list-disc pl-4 space-y-1">
+                      <li>Entre no painel pelo celular e insira as mesmas chaves uma única vez.</li>
+                      <li><strong>Recomendado:</strong> Adicione as chaves <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_ANON_KEY</code> nos <strong>Secrets (Configurações)</strong> do AI Studio. Assim o site já abrirá configurado em qualquer dispositivo automaticamente.</li>
+                    </ul>
+                  </div>
                 </div>
 
                 {hasValidSupabaseConfig && (
@@ -1137,11 +1158,22 @@ function LoginModal({ onLogin, onClose }: { onLogin: (u: string, p: string) => v
         <div className="space-y-4">
           <div>
             <label className="admin-label">Usuário</label>
-            <input className="admin-input" value={user} onChange={e => setUser(e.target.value)} />
+            <input 
+              className="admin-input" 
+              value={user} 
+              onChange={e => setUser(e.target.value)} 
+              autoComplete="new-username"
+            />
           </div>
           <div>
             <label className="admin-label">Senha</label>
-            <input type="password" className="admin-input" value={pass} onChange={e => setPass(e.target.value)} />
+            <input 
+              type="password" 
+              className="admin-input" 
+              value={pass} 
+              onChange={e => setPass(e.target.value)} 
+              autoComplete="new-password"
+            />
           </div>
           <button 
             onClick={() => onLogin(user, pass)}
